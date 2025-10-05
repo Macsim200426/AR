@@ -1,0 +1,50 @@
+kind: pipeline
+type: docker
+name: deploy_viewing_app
+
+steps:
+  # Шаг сборки и тестирования
+  - name: build-and-test
+    image: maven:3.9.8-eclipse-temurin-21
+    commands:
+      - mvn clean package
+    when:
+      branch: main
+
+  # Шаг сборки Docker образа
+  - name: build-docker-image
+    image: docker:dind
+    volumes:
+      - name: docker_sock
+        path: /var/run/docker.sock
+    commands:
+      - docker build -t viewing-app:latest .
+    when:
+      branch: main
+
+  # Шаг деплоя на сервер
+  - name: deploy-to-server
+    image: appleboy/drone-ssh
+    settings:
+      host: your-server-ip
+      username: your-username
+      password:
+        from_secret: ssh_password
+      port: 22
+      script:
+        - echo "Stopping existing container..."
+        - docker stop viewing-container || true
+        - docker rm viewing-container || true
+        - echo "Pulling latest image..."
+        - docker rmi viewing-app:latest || true
+        - docker load -i /path/to/saved/image.tar || true
+        - echo "Starting new container..."
+        - docker run -d -p 8080:2062 --name viewing-container viewing-app:latest
+        - echo "Deployment completed successfully!"
+    when:
+      branch: main
+
+volumes:
+  - name: docker_sock
+    host:
+      path: /var/run/docker.sock
