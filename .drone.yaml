@@ -1,50 +1,60 @@
 kind: pipeline
 type: docker
-name: deploy_viewing_app
+name: simple-deploy
 
 steps:
-  # Шаг сборки и тестирования
-  - name: build-and-test
+  - name: build
     image: maven:3.9.8-eclipse-temurin-21
     commands:
-      - mvn clean package
+      - mvn clean package -DskipTests
     when:
-      branch: main
+      event: [push, tag]
 
-  # Шаг сборки Docker образа
-  - name: build-docker-image
-    image: docker:dind
-    volumes:
-      - name: docker_sock
-        path: /var/run/docker.sock
-    commands:
-      - docker build -t viewing-app:latest .
+  - name: deploy-files
+    image: appleboy/drone-scp
+    settings:
+      host:
+        from_secret: ssh_host
+      username:
+        from_secret: ssh_username
+      key:
+        from_secret: ssh_key
+      port: 22
+      target: /opt/app/
+      source:
+        - target/*.jar
+        - Dockerfile
+        - docker-compose.yml
     when:
-      branch: main
+      event: [push, tag]
+    depends_on: [build]
 
-  # Шаг деплоя на сервер
-  - name: deploy-to-server
+  - name: restart-app
     image: appleboy/drone-ssh
     settings:
-      host: your-server-ip
-      username: your-username
-      password:
-        from_secret: ssh_password
+      host:
+        from_secret: ssh_host
+      username:
+        from_secret: ssh_username
+      key:
+        from_secret: ssh_key
       port: 22
       script:
-        - echo "Stopping existing container..."
-        - docker stop viewing-container || true
-        - docker rm viewing-container || true
-        - echo "Pulling latest image..."
-        - docker rmi viewing-app:latest || true
-        - docker load -i /path/to/saved/image.tar || true
-        - echo "Starting new container..."
-        - docker run -d -p 8080:2062 --name viewing-container viewing-app:latest
+        - cd /opt/app
+        - docker build -t my-app:latest .
+        - docker stop my-app || true
+        - docker rm my-app || true
+        - mkdir -p models
+        - docker run -d --name my-app -p 2062:2062 -v /opt/app/models:/app/models my-app:latest
         - echo "Deployment completed successfully!"
     when:
-      branch: main
+      event: [push, tag]
+    depends_on: [deploy-files]
 
-volumes:
-  - name: docker_sock
-    host:
-      path: /var/run/docker.sock
+trigger:
+  branch:
+    - main
+    - master
+  event:
+    - push
+    - tag
